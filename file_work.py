@@ -1,63 +1,101 @@
+import sqlite3
 import openpyxl as xl
-from config import EXCEL_PATH
+from config import EXCEL_PATH, SQL_PATH, SQL_TABLE_NAME
 
 
-def xl_read_data():
+def shielding(string: str) -> str:
+    '''функция для добавления двойных 
+    кавычек для экранирования строки'''
+    string = str(string)
+    out = '"' + string + '"'
+    return out
+
+def excel_to_sql():
     file = xl.load_workbook(EXCEL_PATH, read_only=True)
     worksheet = file.worksheets[0]
-    rows = list(worksheet.rows)[2:]
-    file.close()
+
+    rows = list(worksheet.rows)
+    header = rows[0]
+    data = rows[1:]
+
+    conn = sqlite3.connect(SQL_PATH)
+    cursor = conn.cursor()
+
+    columns = range(len(header))
+    columns_shielding = map(shielding, map(str, columns))
+    columns_str = ", ".join(columns_shielding)
+
+    cursor.execute(f'DROP TABLE IF EXISTS {SQL_TABLE_NAME}')
+    cursor.execute(f'CREATE TABLE {SQL_TABLE_NAME} (type, {columns_str})')
+
+    header_sql = [cell.value for cell in header]
+    header_shielding = map(shielding, header_sql)
+    header_str = ", ".join(header_shielding)
+    cursor.execute(f'INSERT INTO {SQL_TABLE_NAME} (type, {columns_str}) VALUES ("header", {header_str})')
+
+    for row in data:
+        values = [cell.value for cell in row]
+        values_shielding = map(shielding, values)
+        values_str = ", ".join(values_shielding)
+        cursor.execute(f'INSERT INTO {SQL_TABLE_NAME} ({columns_str}) VALUES ({values_str})')
+
+    conn.commit()
+    conn.close()
+
+def sql_to_excel():
+    conn = sqlite3.connect(SQL_PATH)
+    cursor = conn.cursor()
+
+    workbook = xl.Workbook()
+    worksheet = workbook.active
+
+    cursor.execute(f'SELECT * FROM {SQL_TABLE_NAME}')
+    rows = cursor.fetchall()
+
+    for row in rows:
+        worksheet.append(row[1:])
+
+    workbook.save(EXCEL_PATH)
+    conn.close()
+
+def get_header():
+    conn = sqlite3.connect(SQL_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(f'SELECT * FROM {SQL_TABLE_NAME} WHERE type = ?', 'header')
+    header = cursor.fetchone()
+
+    conn.close()
+
+    return header[1:]
+
+def filters_rows(filters: list):
+    conn = sqlite3.connect(SQL_PATH)
+    cursor = conn.cursor()
+
+    filters = [filter for filter in filters if filter is not None]
+    filters_shielding = map(shielding, filters)
+    filters_str = " AND ".join(filters_shielding)
+
+    cursor.execute(f'SELECT * FROM {SQL_TABLE_NAME} WHERE type != ? AND {filters_str}', 'header')
+    rows = cursor.fetchall()
+    conn.close()
+
     return rows
 
-def xl_read_cell(row: int, column: int):
-    file = xl.load_workbook(EXCEL_PATH, read_only=True)
-    worksheet = file.worksheets[0]
-    value = worksheet.cell(row, column)
-    file.close()
-    return value
+def count_select_filter_rows(filters: list) -> int:
+    conn = sqlite3.connect(SQL_PATH)
+    cursor = conn.cursor()
 
-def xl_read_modificators():
-    file = xl.load_workbook(EXCEL_PATH, read_only=True)
-    worksheet = file.worksheets[0]
-    row = list(worksheet[1])
-    file.close()
-    return row
+    filters = [filter for filter in filters if filter is not None]
+    filters_shielding = map(shielding, filters)
+    filters_str = " AND ".join(filters_shielding)
+# всё не правильно. надо через for и enumerate
+    cursor.execute(f'SELECT COUNT(*) FROM {SQL_TABLE_NAME} WHERE type != ? AND {filters_str}', 'header')
+    count = cursor.fetchone()[0]
+    conn.close()
 
-def xl_read_headers():
-    file = xl.load_workbook(EXCEL_PATH, read_only=True)
-    worksheet = file.worksheets[0]
-    row = list(worksheet[2])
-    file.close()
-    return row
+    return int(count)
 
-def xl_read_users_translate():
-    file = xl.load_workbook(EXCEL_PATH, read_only=True)
-    worksheet = file.worksheets[1]
-    rows = list(worksheet.rows) # получение списка строк
-    get_values = lambda x: x.value # задание именной безымянной для получения парамметра value у переменной
-    rows_values = [tuple(map(get_values, row)) for row in rows] # проходимся по каждой строке, затем проходимся по каждой ячейки и записываем значения
-    translate = dict(rows_values)
-    file.close()
-    return translate
-
-def xl_write_cell(row: int, column: int, value):
-    file = xl.load_workbook(EXCEL_PATH)
-    worksheet = file.worksheets[0]
-    worksheet.cell(row, column, value)
-    file.save(EXCEL_PATH)
-    file.close()
-
-def xl_filter_column(rows: list, index_column: int, value) -> list:
-    filtered_rows = [row for row in rows if row[index_column] == value]
-    return list(filtered_rows)
-
-def xl_filter_column_by_user(rows: list, user_id: int):
-    modificators = xl_read_modificators()
-    user_translation = xl_read_users_translate()
-
-    user_name = user_translation.get(user_id)
-    name_column_index = modificators.index("имя")
-
-    filtered_rows = xl_filter_column(rows, name_column_index, user_name)
-
-    return filtered_rows
+# excel_to_sql()
+# sql_to_excel()
